@@ -1,0 +1,5 @@
+name: dgg phrases tracker
+args:
+    - verbose:
+        short: v
+        help: Shows more info
