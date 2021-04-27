@@ -18,7 +18,10 @@ RUN apt-get update && \
     apt-get install -y musl-tools && \
     rustup target add x86_64-unknown-linux-musl
 
-RUN cargo chef cook --target x86_64-unknown-linux-musl --release --recipe-path recipe.json
+RUN mkdir .cargo
+RUN echo "[net]" >> .cargo/config
+RUN echo "git-fetch-with-cli = true" >> .cargo/config
+RUN RUST_LOG=cargo=debug cargo chef cook --target x86_64-unknown-linux-musl --release --recipe-path recipe.json
 
 FROM rust as builder
 WORKDIR /app
@@ -37,4 +40,4 @@ RUN cargo build --target x86_64-unknown-linux-musl --release --bin dgg-phrases
 FROM alpine
 WORKDIR /app
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/dgg-phrases .
-CMD ["./dgg-phrases -v"]
+CMD ["./dgg-phrases", "-v"]
