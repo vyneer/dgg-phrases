@@ -64,7 +64,7 @@ fn main() {
         Err(_) => panic!("weow")
     }
 
-    let params = format!("host={} user={} password={}", env::var("POSTGRES_DB").unwrap().as_str(), env::var("POSTGRES_USER").unwrap().as_str(), env::var("POSTGRES_PASSWORD").unwrap().as_str());
+    let params = format!("host={} user={} password={}", env::var("POSTGRES_HOST").unwrap().as_str(), env::var("POSTGRES_USER").unwrap().as_str(), env::var("POSTGRES_PASSWORD").unwrap().as_str());
 
     let mut conn = Client::connect(params.as_str(), NoTls).unwrap();
 
