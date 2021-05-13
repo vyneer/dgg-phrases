@@ -81,11 +81,24 @@ fn main() {
     let regex = Regex::new(r"(\d+[HMDSWwhmds])?\s?(.*)").unwrap();
     let regex2 = Regex::new(r"(.*)").unwrap();
 
-    let (mut socket, response) =
-        connect(Url::parse("wss://chat.destiny.gg/ws").unwrap()).expect("Can't connect");
+    let (mut socket, response) = match connect(Url::parse("wss://chat.destiny.gg/ws").unwrap()) {
+        Ok((socket, response)) => {
+            if response.status() != 101 {
+                panic!("Response isn't 101, can't continue.")
+            }
+            (socket, response)
+        },
+        Err(e) => {
+            panic!("Unexpected error: {}", e)
+        }
+    };
 
     info!("Connected to the server");
     debug!("Response HTTP code: {}", response.status());
+
+    if split_once(socket.read_message().unwrap().to_text().unwrap()).0 != "NAMES" {
+        panic!("Couldn't recieve the first message.")
+    }
 
     let check = conn.query_one("select exists (select 1 from phrases)", &[]).unwrap();
     let check_bool: bool = check.get("exists");
@@ -102,75 +115,77 @@ fn main() {
     }
 
     loop {
-        let msg_og = socket.read_message().unwrap();
-        if msg_og.is_text() {
-            let (msg_type, msg_data) = split_once(msg_og.to_text().unwrap());
-            match msg_type {
-                "MSG" => {
-                    let msg_des: Message = serde_json::from_str(&msg_data).unwrap();
-                    if msg_des.data.contains(char::is_whitespace) && (msg_des.features.contains(&"admin".to_string()) || msg_des.features.contains(&"moderator".to_string())) {
-                        let (command, params) = split_once(msg_des.data.as_str());
-                        if command == "!addban" {
-                            match regex.captures(params) {
-                                Some(capt) => {
-                                    let phrase = capt.get(2).map_or("", |m| m.as_str());
-                                    let mut duration = capt.get(1).map_or("", |m| m.as_str());
-                                    if duration.is_empty() {
-                                        duration = "10m"
-                                    }
-                                    conn.execute(
+        if socket.can_write() {
+            let msg_og = socket.read_message().unwrap();
+            if msg_og.is_text() {
+                let (msg_type, msg_data) = split_once(msg_og.to_text().unwrap());
+                match msg_type {
+                    "MSG" => {
+                        let msg_des: Message = serde_json::from_str(&msg_data).unwrap();
+                        if msg_des.data.contains(char::is_whitespace) && (msg_des.features.contains(&"admin".to_string()) || msg_des.features.contains(&"moderator".to_string())) {
+                            let (command, params) = split_once(msg_des.data.as_str());
+                            if command == "!addban" {
+                                match regex.captures(params) {
+                                    Some(capt) => {
+                                        let phrase = capt.get(2).map_or("", |m| m.as_str());
+                                        let mut duration = capt.get(1).map_or("", |m| m.as_str());
+                                        if duration.is_empty() {
+                                            duration = "10m"
+                                        }
+                                        conn.execute(
+                                            "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
+                                            &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"ban".to_string()],
+                                        ).unwrap();
+                                        debug!("Added a ban phrase to db: {:?}", msg_des);
+                                    },
+                                    None => ()
+                                }
+                            } else if command == "!addmute" {
+                                match regex.captures(params) {
+                                    Some(capt) => {
+                                        let phrase = capt.get(2).map_or("", |m| m.as_str());
+                                        let mut duration = capt.get(1).map_or("", |m| m.as_str());
+                                        if duration.is_empty() {
+                                            duration = "10m"
+                                        }
+                                        conn.execute(
                                         "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                                        &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"ban".to_string()],
+                                        &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"mute".to_string()],
                                     ).unwrap();
-                                    debug!("Added a ban phrase to db: {:?}", msg_des);
-                                },
-                                None => ()
-                            }
-                        } else if command == "!addmute" {
-                            match regex.captures(params) {
-                                Some(capt) => {
-                                    let phrase = capt.get(2).map_or("", |m| m.as_str());
-                                    let mut duration = capt.get(1).map_or("", |m| m.as_str());
-                                    if duration.is_empty() {
-                                        duration = "10m"
-                                    }
-                                    conn.execute(
-                                    "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                                    &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"mute".to_string()],
-                                ).unwrap();
-                                    debug!("Added a mute phrase to db: {:?}", msg_des)
-                                },
-                                None => ()
-                            }
-                        } else if command == "!deleteban" || command == "!dban" {
-                            match regex2.captures(params) {
-                                Some(capt) => {
-                                    let phrase = capt.get(1).map_or("", |m| m.as_str());
-                                    conn.execute(
-                                        "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
-                                        &[&phrase],
-                                    ).unwrap();
-                                    debug!("Deleted a ban phrase from db: {:?}", msg_des);
-                                },
-                                None => ()
-                            }
-                        } else if command == "!deletemute" || command == "!dmute" {
-                            match regex2.captures(params) {
-                                Some(capt) => {
-                                    let phrase = capt.get(1).map_or("", |m| m.as_str());
-                                    conn.execute(
-                                        "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
-                                        &[&phrase]
-                                    ).unwrap();
-                                    debug!("Deleted a mute phrase from db: {:?}", msg_des);
-                                },
-                                None => ()
+                                        debug!("Added a mute phrase to db: {:?}", msg_des)
+                                    },
+                                    None => ()
+                                }
+                            } else if command == "!deleteban" || command == "!dban" {
+                                match regex2.captures(params) {
+                                    Some(capt) => {
+                                        let phrase = capt.get(1).map_or("", |m| m.as_str());
+                                        conn.execute(
+                                            "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
+                                            &[&phrase],
+                                        ).unwrap();
+                                        debug!("Deleted a ban phrase from db: {:?}", msg_des);
+                                    },
+                                    None => ()
+                                }
+                            } else if command == "!deletemute" || command == "!dmute" {
+                                match regex2.captures(params) {
+                                    Some(capt) => {
+                                        let phrase = capt.get(1).map_or("", |m| m.as_str());
+                                        conn.execute(
+                                            "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
+                                            &[&phrase]
+                                        ).unwrap();
+                                        debug!("Deleted a mute phrase from db: {:?}", msg_des);
+                                    },
+                                    None => ()
+                                }
                             }
                         }
-                    }
-                    socket.write_message(tungstenite::Message::Ping("ping".as_bytes().to_vec())).unwrap();
-                },
-                _ => (socket.write_message(tungstenite::Message::Ping("ping".as_bytes().to_vec())).unwrap()),
+                        socket.write_message(tungstenite::Message::Ping("ping".as_bytes().to_vec())).unwrap();
+                    },
+                    _ => (socket.write_message(tungstenite::Message::Ping("ping".as_bytes().to_vec())).unwrap()),
+                }
             }
         }
     }
