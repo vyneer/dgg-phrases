@@ -229,7 +229,9 @@ fn main() {
                                     }
                                 }
                             }
-                            let check = phrases.clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) { return Some(f) } else { return None }}).collect::<Vec<String>>();
+                            let check = phrases.clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
+                            //println!("Check: {:#?}", check);
+                            //println!("User_checks: {:#?}", user_checks);
                             if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
                                 match regex3.captures(msg_des.data.as_str()) {
                                     Some(capt) => {
@@ -247,6 +249,9 @@ fn main() {
                                             ).unwrap();
                                             phrases.push(phrase.to_string());
                                             debug!("Added a {} phrase to db: {:?}", typ, phrase);
+                                        }
+                                        if phrases.contains(&phrase.to_string()) && !user_checks.iter().filter_map(|f| { if f.data == phrase.to_string() { return Some(f.clone().data) } else { return None } }).collect::<Vec<String>>().is_empty() {
+                                            user_checks.remove(user_checks.iter().position(|x| *x.data == phrase.to_string()).unwrap());
                                         }
                                     },
                                     None => ()
