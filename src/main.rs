@@ -112,7 +112,7 @@ fn main() {
                 "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
                 &[&Decimal::new(DateTime::parse_from_rfc3339(entry.time_date.as_str()).unwrap().timestamp_millis(), 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
             ).unwrap();
-            debug!("Added a {} phrase to db: {:?}", entry.phrase_type, entry.to_lowercase());
+            debug!("Added a {} phrase to db: {:?}", entry.phrase_type, entry.phrase.to_lowercase());
         }
     }
 
