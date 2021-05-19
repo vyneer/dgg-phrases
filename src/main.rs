@@ -126,7 +126,7 @@ fn main() {
     for entry in &bm_vec {
         conn.execute(
             "DELETE FROM phrases where phrase = $1", 
-            &[&entry],
+            &[&entry.to_lowercase()],
         ).unwrap();
         debug!("Deleted a banned meme phrase from db: {:?}", entry);
     }
