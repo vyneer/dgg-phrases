@@ -110,7 +110,7 @@ fn main() {
         for entry in resp.list {
             conn.execute(
                 "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                &[&Decimal::new(DateTime::parse_from_rfc3339(entry.time_date.as_str()).unwrap().timestamp_millis(), 0), &entry.username, &entry.phrase, &entry.duration, &entry.phrase_type],
+                &[&Decimal::new(DateTime::parse_from_rfc3339(entry.time_date.as_str()).unwrap().timestamp_millis(), 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
             ).unwrap();
             debug!("Added a {} phrase to db: {:?}", entry.phrase_type, entry);
         }
@@ -230,12 +230,10 @@ fn main() {
                                 }
                             }
                             let check = phrases.clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
-                            //println!("Check: {:#?}", check);
-                            //println!("User_checks: {:#?}", user_checks);
                             if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
                                 match regex3.captures(msg_des.data.as_str()) {
                                     Some(capt) => {
-                                        let phrase = capt.get(2).map_or("", |m| m.as_str());
+                                        let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
                                         let typ;
                                         if capt.get(1).map_or("", |m| m.as_str()) == "muted" {
                                             typ = "mute".to_string();
