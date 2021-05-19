@@ -50,7 +50,7 @@ fn push_status(vector: &mut Vec<Status>, msg: &Message, phrase: String) {
     let buf = Status {
         nick: msg.nick.clone(),
         timestamp: msg.timestamp,
-        data: phrase,
+        data: phrase.to_lowercase(),
     };
     vector.push(buf);
 }
@@ -112,7 +112,7 @@ fn main() {
                 "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
                 &[&Decimal::new(DateTime::parse_from_rfc3339(entry.time_date.as_str()).unwrap().timestamp_millis(), 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
             ).unwrap();
-            debug!("Added a {} phrase to db: {:?}", entry.phrase_type, entry);
+            debug!("Added a {} phrase to db: {:?}", entry.phrase_type, entry.to_lowercase());
         }
     }
 
@@ -128,7 +128,7 @@ fn main() {
             "DELETE FROM phrases where phrase = $1", 
             &[&entry.to_lowercase()],
         ).unwrap();
-        debug!("Deleted a banned meme phrase from db: {:?}", entry);
+        debug!("Deleted a banned meme phrase from db: {:?}", entry.to_lowercase());
     }
 
     for row in conn.query("SELECT phrase FROM phrases ORDER by time DESC", &[]).unwrap() {
@@ -170,7 +170,7 @@ fn main() {
                                 if command == "!addban" {
                                     match regex.captures(params) {
                                         Some(capt) => {
-                                            let phrase = capt.get(2).map_or("", |m| m.as_str());
+                                            let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
                                             let mut duration = capt.get(1).map_or("", |m| m.as_str());
                                             if duration.is_empty() {
                                                 duration = "10m"
@@ -187,7 +187,7 @@ fn main() {
                                 } else if command == "!addmute" {
                                     match regex.captures(params) {
                                         Some(capt) => {
-                                            let phrase = capt.get(2).map_or("", |m| m.as_str());
+                                            let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
                                             let mut duration = capt.get(1).map_or("", |m| m.as_str());
                                             if duration.is_empty() {
                                                 duration = "10m"
@@ -204,7 +204,7 @@ fn main() {
                                 } else if command == "!deleteban" || command == "!dban" {
                                     match regex2.captures(params) {
                                         Some(capt) => {
-                                            let phrase = capt.get(1).map_or("", |m| m.as_str());
+                                            let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
                                             conn.execute(
                                                 "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
                                                 &[&phrase],
@@ -217,7 +217,7 @@ fn main() {
                                 } else if command == "!deletemute" || command == "!dmute" {
                                     match regex2.captures(params) {
                                         Some(capt) => {
-                                            let phrase = capt.get(1).map_or("", |m| m.as_str());
+                                            let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
                                             conn.execute(
                                                 "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
                                                 &[&phrase]
