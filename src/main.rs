@@ -2,7 +2,7 @@ use rust_decimal::prelude::Decimal;
 use chrono::DateTime;
 use tokio_postgres::*;
 use std::fs;
-use tokio_tungstenite::{connect_async, tungstenite::Message::Ping};
+use tokio_tungstenite::{connect_async, tungstenite::Message::Pong};
 use serde::Deserialize;
 use url::Url;
 use log::{info, debug, error};
@@ -301,10 +301,13 @@ async fn main() {
                                 push_status(&mut user_checks, &msg_des, res);
                             }
                         }
-                        stdin_tx.unbounded_send(Ping("ping".as_bytes().to_vec())).unwrap();
                     },
-                    _ => (stdin_tx.unbounded_send(Ping("ping".as_bytes().to_vec())).unwrap()),
+                    _ => (),
                 }
+            }
+            if msg_og.is_ping() {
+                debug!("{:?}", Pong(msg_og.clone().into_data()));
+                stdin_tx.unbounded_send(Pong(msg_og.clone().into_data())).unwrap();
             }
             if msg_og.is_close() {
                 panic!("Server closed the connection, panicking.");
