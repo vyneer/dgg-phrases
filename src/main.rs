@@ -1,13 +1,12 @@
 use rust_decimal::prelude::Decimal;
 use chrono::DateTime;
 use tokio_postgres::*;
-use std::fs;
 use tokio_tungstenite::{connect_async, tungstenite::Message::Pong};
 use serde::Deserialize;
 use url::Url;
 use log::{info, debug, error};
 use clap::{load_yaml, crate_authors, crate_description, crate_version, App};
-use std::env;
+use std::{env, thread, fs, panic, process};
 use env_logger::Env;
 use regex::Regex;
 use std::{
@@ -92,6 +91,12 @@ async fn main() {
 
     let params = format!("host={} user={} password={}", env::var("POSTGRES_HOST").unwrap().as_str(), env::var("POSTGRES_USER").unwrap().as_str(), env::var("POSTGRES_PASSWORD").unwrap().as_str());
 
+    let orig_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        orig_hook(panic_info);
+        process::exit(1);
+    }));
+
     let (conn, conn2) = connect(params.as_str(), NoTls).await.unwrap();
 
     tokio::spawn(async move {
@@ -174,12 +179,23 @@ async fn main() {
         debug!("Response HTTP code: {}", response.status());
     
         let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
+
+        let (timer_tx, timer_rx) = std::sync::mpsc::channel();
+
+        thread::spawn(move || {
+            loop {
+                match timer_rx.recv_timeout(Duration::from_secs(60)) {
+                    Ok(_) => (),
+                    Err(_) => panic!("Lost connection, restarting.")
+                }
+            }
+        });
     
         let (write, read) = socket.split();
         
         let stdin_to_ws = stdin_rx.map(Ok).forward(write);
         let ws_to_stdout = {
-            let reader = read.for_each(|msg| async {
+            read.for_each(|msg| async {
                 let msg_og = match msg {
                     Ok(msg_og) => msg_og,
                     Err(tokio_tungstenite::tungstenite::Error::Io(e)) => {
@@ -189,6 +205,7 @@ async fn main() {
                         panic!("Some kind of other error occured, panicking: {}", e);
                     }
                 };
+                timer_tx.send(0).unwrap();
                 if msg_og.is_text() {
                     let (msg_type, msg_data) = split_once(msg_og.to_text().unwrap());
                     match msg_type {
@@ -315,8 +332,7 @@ async fn main() {
                 if msg_og.is_close() {
                     panic!("Server closed the connection, panicking.");
                 }
-            });
-            timeout(Duration::from_secs(60*2), reader)
+            })
         };
     
         pin_mut!(stdin_to_ws, ws_to_stdout);
