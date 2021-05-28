@@ -12,8 +12,6 @@ use regex::Regex;
 use std::{
     fs::File,
     io::{prelude::*, BufReader},
-    rc::*,
-    cell::RefCell,
 };
 use futures_util::{future, StreamExt, pin_mut};
 use tokio::time::timeout;
@@ -133,7 +131,7 @@ async fn main() {
         }
     }
 
-    let phrases: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut phrases: Vec<String> = Vec::new();
 
     let file = File::open("banned_memes.txt").expect("no such file");
     let buf = BufReader::new(file);
@@ -149,10 +147,10 @@ async fn main() {
     }
 
     for row in conn.query("SELECT phrase FROM phrases ORDER by time DESC", &[]).await.unwrap() {
-        phrases.borrow_mut().push(row.get("phrase"))
+        phrases.push(row.get("phrase"))
     }
 
-    let user_checks: Rc<RefCell<Vec<Status>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut user_checks: Vec<Status> = Vec::new();
 
     loop {
         let ws = connect_async(Url::parse("wss://chat.destiny.gg/ws").unwrap());
@@ -191,11 +189,11 @@ async fn main() {
             }
         });
     
-        let (write, read) = socket.split();
+        let (write, mut read) = socket.split();
         
         let stdin_to_ws = stdin_rx.map(Ok).forward(write);
         let ws_to_stdout = {
-            read.for_each(|msg| async {
+            while let Some(msg) = read.next().await {
                 let msg_og = match msg {
                     Ok(msg_og) => msg_og,
                     Err(tokio_tungstenite::tungstenite::Error::Io(e)) => {
@@ -225,7 +223,7 @@ async fn main() {
                                                 "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
                                                 &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"ban".to_string()],
                                             ).await.unwrap();
-                                            phrases.borrow_mut().push(phrase.to_string());
+                                            phrases.push(phrase.to_string());
                                             debug!("Added a ban phrase to db: {:?}", msg_des);
                                         },
                                         None => ()
@@ -242,7 +240,7 @@ async fn main() {
                                             "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
                                             &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"mute".to_string()],
                                             ).await.unwrap();
-                                            phrases.borrow_mut().push(phrase.to_string());
+                                            phrases.push(phrase.to_string());
                                             debug!("Added a mute phrase to db: {:?}", msg_des)
                                         },
                                         None => ()
@@ -255,7 +253,7 @@ async fn main() {
                                                 "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
                                                 &[&phrase],
                                             ).await.unwrap();
-                                            phrases.borrow_mut().remove(phrases.borrow_mut().iter().position(|x| *x == phrase).unwrap());
+                                            phrases.remove(phrases.iter().position(|x| *x == phrase).unwrap());
                                             debug!("Deleted a ban phrase from db: {:?}", msg_des);
                                         },
                                         None => ()
@@ -268,14 +266,14 @@ async fn main() {
                                                 "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
                                                 &[&phrase]
                                             ).await.unwrap();
-                                            phrases.borrow_mut().remove(phrases.borrow_mut().iter().position(|x| *x == phrase).unwrap());
+                                            phrases.remove(phrases.iter().position(|x| *x == phrase).unwrap());
                                             debug!("Deleted a mute phrase from db: {:?}", msg_des);
                                         },
                                         None => ()
                                     }
                                 }
                             }
-                            let check = phrases.borrow_mut().clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
+                            let check = phrases.clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
                             if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
                                 match regex3.captures(msg_des.data.as_str()) {
                                     Some(capt) => {
@@ -286,39 +284,39 @@ async fn main() {
                                         } else {
                                             typ = "ban".to_string();
                                         }
-                                        if !phrases.borrow_mut().contains(&phrase.to_string()) && !bm_vec.contains(&phrase.to_string()) {
+                                        if !phrases.contains(&phrase.to_string()) && !bm_vec.contains(&phrase.to_string()) {
                                             conn.execute(
                                             "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
                                             &[&Decimal::new(0, 0), &msg_des.nick, &phrase, &"", &typ],
                                             ).await.unwrap();
-                                            phrases.borrow_mut().push(phrase.to_string());
+                                            phrases.push(phrase.to_string());
                                             debug!("Added a {} phrase to db: {:?}", typ, phrase);
                                         }
-                                        if phrases.borrow_mut().contains(&phrase.to_string()) && !user_checks.borrow_mut().iter().filter_map(|f| { if f.data == phrase.to_string() { return Some(f.clone().data) } else { return None } }).collect::<Vec<String>>().is_empty() {
-                                            user_checks.borrow_mut().remove(user_checks.borrow_mut().iter().position(|x| *x.data == phrase.to_string()).unwrap());
+                                        if phrases.contains(&phrase.to_string()) && !user_checks.iter().filter_map(|f| { if f.data == phrase.to_string() { return Some(f.clone().data) } else { return None } }).collect::<Vec<String>>().is_empty() {
+                                            user_checks.remove(user_checks.iter().position(|x| *x.data == phrase.to_string()).unwrap());
                                         }
                                     },
                                     None => ()
                                 }
                             }
-                            if user_checks.borrow_mut().len() > 0 {
-                                for check in user_checks.borrow_mut().clone() {
+                            if user_checks.len() > 0 {
+                                for check in user_checks.clone() {
                                     if (check.timestamp + 10000) < msg_des.timestamp {
                                         conn.execute(
                                             "DELETE FROM phrases WHERE phrase = $1", 
                                             &[&check.data]
                                         ).await.unwrap();
-                                        if phrases.borrow_mut().contains(&check.data) {
-                                            phrases.borrow_mut().remove(phrases.borrow_mut().iter().position(|x| *x == check.data).unwrap());
+                                        if phrases.contains(&check.data) {
+                                            phrases.remove(phrases.iter().position(|x| *x == check.data).unwrap());
                                         }
                                         debug!("Deleted a phrase from db: {:?}", check.data);
-                                        user_checks.borrow_mut().remove(user_checks.borrow_mut().iter().position(|x| *x == check).unwrap());
+                                        user_checks.remove(user_checks.iter().position(|x| *x == check).unwrap());
                                     }
                                 }
                             }
                             if !check.is_empty() {
                                 for res in check {
-                                    push_status(&mut user_checks.borrow_mut(), &msg_des, res);
+                                    push_status(&mut user_checks, &msg_des, res);
                                 }
                             }
                         },
@@ -332,7 +330,8 @@ async fn main() {
                 if msg_og.is_close() {
                     panic!("Server closed the connection, panicking.");
                 }
-            })
+            };
+            read.into_future()
         };
     
         pin_mut!(stdin_to_ws, ws_to_stdout);
