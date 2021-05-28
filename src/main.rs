@@ -13,6 +13,8 @@ use regex::Regex;
 use std::{
     fs::File,
     io::{prelude::*, BufReader},
+    rc::*,
+    cell::RefCell,
 };
 use futures_util::{future, StreamExt, pin_mut};
 use tokio::time::timeout;
@@ -126,7 +128,7 @@ async fn main() {
         }
     }
 
-    let mut phrases: Vec<String> = Vec::new();
+    let phrases: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
 
     let file = File::open("banned_memes.txt").expect("no such file");
     let buf = BufReader::new(file);
@@ -142,181 +144,182 @@ async fn main() {
     }
 
     for row in conn.query("SELECT phrase FROM phrases ORDER by time DESC", &[]).await.unwrap() {
-        phrases.push(row.get("phrase"))
+        phrases.borrow_mut().push(row.get("phrase"))
     }
 
-    let mut user_checks: Vec<Status> = Vec::new();
+    let user_checks: Rc<RefCell<Vec<Status>>> = Rc::new(RefCell::new(Vec::new()));
 
-    let ws = connect_async(Url::parse("wss://chat.destiny.gg/ws").unwrap());
+    loop {
+        let ws = connect_async(Url::parse("wss://chat.destiny.gg/ws").unwrap());
 
-    let (socket, response) = match timeout(Duration::from_secs(10), ws).await {
-        Ok(ws) => {
-            let (socket, response) = match ws {
-                Ok((socket, response)) => {
-                    if response.status() != 101 {
-                        panic!("Response isn't 101, can't continue.")
-                    }
-                    (socket, response)
-                },
-                Err(e) => {
-                    panic!("Unexpected error: {}", e)
-                }
-            };
-            (socket, response)
-        },
-        Err(_) => panic!("Connection timed out, panicking.")
-    };
-    
-    info!("Connected to the server");
-    debug!("Response HTTP code: {}", response.status());
-
-    let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
-
-    let (write, mut read) = socket.split();
-    
-    let stdin_to_ws = stdin_rx.map(Ok).forward(write);
-    let ws_to_stdout = {
-        while let Some(msg) = read.next().await {
-            let msg_og = match msg {
-                Ok(msg_og) => msg_og,
-                Err(tokio_tungstenite::tungstenite::Error::Io(e)) => {
-                    panic!("Tungstenite IO error, panicking: {}", e);
-                },
-                Err(e) => {
-                    panic!("Some kind of other error occured, panicking: {}", e);
-                }
-            };
-            if msg_og.is_text() {
-                let (msg_type, msg_data) = split_once(msg_og.to_text().unwrap());
-                match msg_type {
-                    "MSG" => {
-                        let msg_des: Message = serde_json::from_str(&msg_data).unwrap();
-                        if msg_des.data.contains(char::is_whitespace) && (msg_des.features.contains(&"admin".to_string()) || msg_des.features.contains(&"moderator".to_string())) {
-                            let (command, params) = split_once(msg_des.data.as_str());
-                            if command == "!addban" {
-                                match regex.captures(params) {
-                                    Some(capt) => {
-                                        let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
-                                        let mut duration = capt.get(1).map_or("", |m| m.as_str());
-                                        if duration.is_empty() {
-                                            duration = "10m"
-                                        }
-                                        conn.execute(
-                                            "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                                            &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"ban".to_string()],
-                                        ).await.unwrap();
-                                        phrases.push(phrase.to_string());
-                                        debug!("Added a ban phrase to db: {:?}", msg_des);
-                                    },
-                                    None => ()
-                                }
-                            } else if command == "!addmute" {
-                                match regex.captures(params) {
-                                    Some(capt) => {
-                                        let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
-                                        let mut duration = capt.get(1).map_or("", |m| m.as_str());
-                                        if duration.is_empty() {
-                                            duration = "10m"
-                                        }
-                                        conn.execute(
-                                        "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                                        &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"mute".to_string()],
-                                        ).await.unwrap();
-                                        phrases.push(phrase.to_string());
-                                        debug!("Added a mute phrase to db: {:?}", msg_des)
-                                    },
-                                    None => ()
-                                }
-                            } else if command == "!deleteban" || command == "!dban" {
-                                match regex2.captures(params) {
-                                    Some(capt) => {
-                                        let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
-                                        conn.execute(
-                                            "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
-                                            &[&phrase],
-                                        ).await.unwrap();
-                                        phrases.remove(phrases.iter().position(|x| *x == phrase).unwrap());
-                                        debug!("Deleted a ban phrase from db: {:?}", msg_des);
-                                    },
-                                    None => ()
-                                }
-                            } else if command == "!deletemute" || command == "!dmute" {
-                                match regex2.captures(params) {
-                                    Some(capt) => {
-                                        let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
-                                        conn.execute(
-                                            "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
-                                            &[&phrase]
-                                        ).await.unwrap();
-                                        phrases.remove(phrases.iter().position(|x| *x == phrase).unwrap());
-                                        debug!("Deleted a mute phrase from db: {:?}", msg_des);
-                                    },
-                                    None => ()
-                                }
-                            }
+        let (socket, response) = match timeout(Duration::from_secs(10), ws).await {
+            Ok(ws) => {
+                let (socket, response) = match ws {
+                    Ok((socket, response)) => {
+                        if response.status() != 101 {
+                            panic!("Response isn't 101, can't continue.")
                         }
-                        let check = phrases.clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
-                        if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
-                            match regex3.captures(msg_des.data.as_str()) {
-                                Some(capt) => {
-                                    let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
-                                    let typ;
-                                    if capt.get(1).map_or("", |m| m.as_str()) == "muted" {
-                                        typ = "mute".to_string();
-                                    } else {
-                                        typ = "ban".to_string();
-                                    }
-                                    if !phrases.contains(&phrase.to_string()) && !bm_vec.contains(&phrase.to_string()) {
-                                        conn.execute(
-                                        "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                                        &[&Decimal::new(0, 0), &msg_des.nick, &phrase, &"", &typ],
-                                        ).await.unwrap();
-                                        phrases.push(phrase.to_string());
-                                        debug!("Added a {} phrase to db: {:?}", typ, phrase);
-                                    }
-                                    if phrases.contains(&phrase.to_string()) && !user_checks.iter().filter_map(|f| { if f.data == phrase.to_string() { return Some(f.clone().data) } else { return None } }).collect::<Vec<String>>().is_empty() {
-                                        user_checks.remove(user_checks.iter().position(|x| *x.data == phrase.to_string()).unwrap());
-                                    }
-                                },
-                                None => ()
-                            }
-                        }
-                        if user_checks.len() > 0 {
-                            for check in user_checks.clone() {
-                                if (check.timestamp + 10000) < msg_des.timestamp {
-                                    conn.execute(
-                                        "DELETE FROM phrases WHERE phrase = $1", 
-                                        &[&check.data]
-                                    ).await.unwrap();
-                                    if phrases.contains(&check.data) {
-                                        phrases.remove(phrases.iter().position(|x| *x == check.data).unwrap());
-                                    }
-                                    debug!("Deleted a phrase from db: {:?}", check.data);
-                                    user_checks.remove(user_checks.iter().position(|x| *x == check).unwrap());
-                                }
-                            }
-                        }
-                        if !check.is_empty() {
-                            for res in check {
-                                push_status(&mut user_checks, &msg_des, res);
-                            }
-                        }
+                        (socket, response)
                     },
-                    _ => (),
+                    Err(e) => {
+                        panic!("Unexpected error: {}", e)
+                    }
+                };
+                (socket, response)
+            },
+            Err(_) => panic!("Connection timed out, panicking.")
+        };
+        
+        info!("Connected to the server");
+        debug!("Response HTTP code: {}", response.status());
+    
+        let (stdin_tx, stdin_rx) = futures_channel::mpsc::unbounded();
+    
+        let (write, read) = socket.split();
+        
+        let stdin_to_ws = stdin_rx.map(Ok).forward(write);
+        let ws_to_stdout = {
+            let reader = read.for_each(|msg| async {
+                let msg_og = match msg {
+                    Ok(msg_og) => msg_og,
+                    Err(tokio_tungstenite::tungstenite::Error::Io(e)) => {
+                        panic!("Tungstenite IO error, panicking: {}", e);
+                    },
+                    Err(e) => {
+                        panic!("Some kind of other error occured, panicking: {}", e);
+                    }
+                };
+                if msg_og.is_text() {
+                    let (msg_type, msg_data) = split_once(msg_og.to_text().unwrap());
+                    match msg_type {
+                        "MSG" => {
+                            let msg_des: Message = serde_json::from_str(&msg_data).unwrap();
+                            if msg_des.data.contains(char::is_whitespace) && (msg_des.features.contains(&"admin".to_string()) || msg_des.features.contains(&"moderator".to_string())) {
+                                let (command, params) = split_once(msg_des.data.as_str());
+                                if command == "!addban" {
+                                    match regex.captures(params) {
+                                        Some(capt) => {
+                                            let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
+                                            let mut duration = capt.get(1).map_or("", |m| m.as_str());
+                                            if duration.is_empty() {
+                                                duration = "10m"
+                                            }
+                                            conn.execute(
+                                                "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
+                                                &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"ban".to_string()],
+                                            ).await.unwrap();
+                                            phrases.borrow_mut().push(phrase.to_string());
+                                            debug!("Added a ban phrase to db: {:?}", msg_des);
+                                        },
+                                        None => ()
+                                    }
+                                } else if command == "!addmute" {
+                                    match regex.captures(params) {
+                                        Some(capt) => {
+                                            let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
+                                            let mut duration = capt.get(1).map_or("", |m| m.as_str());
+                                            if duration.is_empty() {
+                                                duration = "10m"
+                                            }
+                                            conn.execute(
+                                            "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
+                                            &[&Decimal::new(msg_des.timestamp, 0), &msg_des.nick, &phrase, &duration, &"mute".to_string()],
+                                            ).await.unwrap();
+                                            phrases.borrow_mut().push(phrase.to_string());
+                                            debug!("Added a mute phrase to db: {:?}", msg_des)
+                                        },
+                                        None => ()
+                                    }
+                                } else if command == "!deleteban" || command == "!dban" {
+                                    match regex2.captures(params) {
+                                        Some(capt) => {
+                                            let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
+                                            conn.execute(
+                                                "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
+                                                &[&phrase],
+                                            ).await.unwrap();
+                                            phrases.borrow_mut().remove(phrases.borrow_mut().iter().position(|x| *x == phrase).unwrap());
+                                            debug!("Deleted a ban phrase from db: {:?}", msg_des);
+                                        },
+                                        None => ()
+                                    }
+                                } else if command == "!deletemute" || command == "!dmute" {
+                                    match regex2.captures(params) {
+                                        Some(capt) => {
+                                            let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
+                                            conn.execute(
+                                                "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
+                                                &[&phrase]
+                                            ).await.unwrap();
+                                            phrases.borrow_mut().remove(phrases.borrow_mut().iter().position(|x| *x == phrase).unwrap());
+                                            debug!("Deleted a mute phrase from db: {:?}", msg_des);
+                                        },
+                                        None => ()
+                                    }
+                                }
+                            }
+                            let check = phrases.borrow_mut().clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
+                            if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
+                                match regex3.captures(msg_des.data.as_str()) {
+                                    Some(capt) => {
+                                        let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
+                                        let typ;
+                                        if capt.get(1).map_or("", |m| m.as_str()) == "muted" {
+                                            typ = "mute".to_string();
+                                        } else {
+                                            typ = "ban".to_string();
+                                        }
+                                        if !phrases.borrow_mut().contains(&phrase.to_string()) && !bm_vec.contains(&phrase.to_string()) {
+                                            conn.execute(
+                                            "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
+                                            &[&Decimal::new(0, 0), &msg_des.nick, &phrase, &"", &typ],
+                                            ).await.unwrap();
+                                            phrases.borrow_mut().push(phrase.to_string());
+                                            debug!("Added a {} phrase to db: {:?}", typ, phrase);
+                                        }
+                                        if phrases.borrow_mut().contains(&phrase.to_string()) && !user_checks.borrow_mut().iter().filter_map(|f| { if f.data == phrase.to_string() { return Some(f.clone().data) } else { return None } }).collect::<Vec<String>>().is_empty() {
+                                            user_checks.borrow_mut().remove(user_checks.borrow_mut().iter().position(|x| *x.data == phrase.to_string()).unwrap());
+                                        }
+                                    },
+                                    None => ()
+                                }
+                            }
+                            if user_checks.borrow_mut().len() > 0 {
+                                for check in user_checks.borrow_mut().clone() {
+                                    if (check.timestamp + 10000) < msg_des.timestamp {
+                                        conn.execute(
+                                            "DELETE FROM phrases WHERE phrase = $1", 
+                                            &[&check.data]
+                                        ).await.unwrap();
+                                        if phrases.borrow_mut().contains(&check.data) {
+                                            phrases.borrow_mut().remove(phrases.borrow_mut().iter().position(|x| *x == check.data).unwrap());
+                                        }
+                                        debug!("Deleted a phrase from db: {:?}", check.data);
+                                        user_checks.borrow_mut().remove(user_checks.borrow_mut().iter().position(|x| *x == check).unwrap());
+                                    }
+                                }
+                            }
+                            if !check.is_empty() {
+                                for res in check {
+                                    push_status(&mut user_checks.borrow_mut(), &msg_des, res);
+                                }
+                            }
+                        },
+                        _ => (),
+                    }
                 }
-            }
-            if msg_og.is_ping() {
-                debug!("{:?}", Pong(msg_og.clone().into_data()));
-                stdin_tx.unbounded_send(Pong(msg_og.clone().into_data())).unwrap();
-            }
-            if msg_og.is_close() {
-                panic!("Server closed the connection, panicking.");
-            }
-        }
-        // im really not sure about the line below
-        read.into_future() 
-    };
-
-    pin_mut!(stdin_to_ws, ws_to_stdout);
-    future::select(stdin_to_ws, ws_to_stdout).await;
+                if msg_og.is_ping() {
+                    debug!("{:?}", Pong(msg_og.clone().into_data()));
+                    stdin_tx.unbounded_send(Pong(msg_og.clone().into_data())).unwrap();
+                }
+                if msg_og.is_close() {
+                    panic!("Server closed the connection, panicking.");
+                }
+            });
+            timeout(Duration::from_secs(60*2), reader)
+        };
+    
+        pin_mut!(stdin_to_ws, ws_to_stdout);
+        future::select(stdin_to_ws, ws_to_stdout).await;        
+    } 
 }
