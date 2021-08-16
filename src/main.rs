@@ -48,6 +48,14 @@ struct Status {
     timestamp: i64,
 }
 
+// https://stackoverflow.com/questions/65976432/how-to-remove-first-and-last-character-of-a-string-in-rust
+fn rem_first_and_last(value: &str) -> &str {
+    let mut chars = value.chars();
+    chars.next();
+    chars.next_back();
+    chars.as_str()
+}
+
 fn push_status(vector: &mut Vec<Status>, msg: &Message, phrase: String) {
     let buf = Status {
         nick: msg.nick.clone(),
@@ -273,7 +281,17 @@ async fn main() {
                                     }
                                 }
                             }
-                            let check = phrases.clone().into_iter().filter_map(|f| {if msg_des.data.contains(&f) && !msg_des.features.contains(&"protected".to_string()) { return Some(f) } else { return None }}).collect::<Vec<String>>();
+                            let check = phrases.clone().into_iter().filter_map(|f| { 
+                                if (msg_des.data.contains(&f) || (if &f.chars().next().unwrap() == &'/' && &f.chars().next_back().unwrap() == &'/' {
+                                     Regex::new(rem_first_and_last(&f.replace("\\/", "/"))).unwrap().is_match(&msg_des.data )
+                                    } else { 
+                                        false 
+                                    }) ) && !msg_des.features.contains(&"protected".to_string()) {
+                                    return Some(f) 
+                                } else { 
+                                    return None 
+                                }
+                            }).collect::<Vec<String>>();
                             if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
                                 match regex3.captures(msg_des.data.as_str()) {
                                     Some(capt) => {
