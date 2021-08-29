@@ -253,29 +253,23 @@ async fn main() {
                                         },
                                         None => ()
                                     }
-                                } else if command == "!deleteban" || command == "!dban" {
+                                } else if command == "!deleteban" || command == "!dban" || command == "!deletemute" || command == "!dmute" {
                                     match regex2.captures(params) {
                                         Some(capt) => {
                                             let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
-                                            conn.execute(
-                                                "DELETE FROM phrases WHERE type = 'ban' and phrase = $1", 
-                                                &[&phrase],
-                                            ).await.unwrap();
-                                            phrases.remove(phrases.iter().position(|x| *x == phrase).unwrap());
-                                            debug!("Deleted a ban phrase from db: {:?}", msg_des);
-                                        },
-                                        None => ()
-                                    }
-                                } else if command == "!deletemute" || command == "!dmute" {
-                                    match regex2.captures(params) {
-                                        Some(capt) => {
-                                            let phrase = capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
-                                            conn.execute(
-                                                "DELETE FROM phrases WHERE phrase = $1 AND type = 'mute'", 
-                                                &[&phrase]
-                                            ).await.unwrap();
-                                            phrases.remove(phrases.iter().position(|x| *x == phrase).unwrap());
-                                            debug!("Deleted a mute phrase from db: {:?}", msg_des);
+                                            match phrases.iter().position(|x| *x == phrase) {
+                                                Some(i) => {
+                                                    conn.execute(
+                                                        "DELETE FROM phrases WHERE phrase = $1", 
+                                                        &[&phrase],
+                                                    ).await.unwrap();
+                                                    phrases.remove(i);
+                                                    debug!("Deleted a phrase from db: {:?}", msg_des);
+                                                },
+                                                None => {
+                                                    debug!("Doesn't seem like the phrase is banned/muted: {:?}", msg_des);
+                                                }
+                                            };
                                         },
                                         None => ()
                                     }
