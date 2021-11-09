@@ -178,7 +178,10 @@ async fn main() {
                 };
                 (socket, response)
             },
-            Err(_) => panic!("Connection timed out, panicking.")
+            Err(e) => {
+                error!("Connection timed out, restarting the loop: {}", e);
+                continue;
+            }
         };
         
         info!("Connected to the server");
@@ -192,7 +195,7 @@ async fn main() {
             loop {
                 match timer_rx.recv_timeout(Duration::from_secs(60)) {
                     Ok(_) => (),
-                    Err(_) => panic!("Lost connection, restarting.")
+                    Err(e) => panic!("Lost connection, panicking: {}", e)
                 }
             }
         });
@@ -208,7 +211,8 @@ async fn main() {
                         panic!("Tungstenite IO error, panicking: {}", e);
                     },
                     Err(e) => {
-                        panic!("Some kind of other error occured, panicking: {}", e);
+                        error!("Some kind of other error occured, restarting the loop: {}", e);
+                        continue;
                     }
                 };
                 timer_tx.send(0).unwrap();
@@ -339,7 +343,8 @@ async fn main() {
                     stdin_tx.unbounded_send(Pong(msg_og.clone().into_data())).unwrap();
                 }
                 if msg_og.is_close() {
-                    panic!("Server closed the connection, panicking.");
+                    error!("Server closed the connection, restarting the loop.");
+                    continue;
                 }
             };
             read.into_future()
