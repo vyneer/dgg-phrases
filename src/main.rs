@@ -123,7 +123,7 @@ async fn main() {
 
     let regex = Regex::new(r"(\d+[HMDSWwhmds])?\s?(.*)").unwrap();
     let regex2 = Regex::new(r"(.*)").unwrap();
-    let regex3 = Regex::new(r"(muted|banned) for using banned phrase\((.*)\)").unwrap();
+    let regex3 = Regex::new(r"(.*) (muted|banned) for using banned phrase\((.*)\)").unwrap();
 
     let check = conn.query_one("select exists (select 1 from phrases)", &[]).await.unwrap();
     let check_bool: bool = check.get("exists");
@@ -293,9 +293,10 @@ async fn main() {
                             if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
                                 match regex3.captures(msg_des.data.as_str()) {
                                     Some(capt) => {
-                                        let phrase = capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
+                                        let username = capt.get(1).map_or("", |m| m.as_str()).to_string();
+                                        let phrase = capt.get(3).map_or("", |m| m.as_str()).to_lowercase();
                                         let typ;
-                                        if capt.get(1).map_or("", |m| m.as_str()) == "muted" {
+                                        if capt.get(2).map_or("", |m| m.as_str()) == "muted" {
                                             typ = "mute".to_string();
                                         } else {
                                             typ = "ban".to_string();
@@ -308,9 +309,7 @@ async fn main() {
                                             phrases.push(phrase.to_string());
                                             debug!("Added a {} phrase to db: {:?}", typ, phrase);
                                         }
-                                        if phrases.contains(&phrase.to_string()) && !user_checks.iter().filter_map(|f| { if f.data == phrase.to_string() { return Some(f.clone().data) } else { return None } }).collect::<Vec<String>>().is_empty() {
-                                            user_checks.remove(user_checks.iter().position(|x| *x.data == phrase.to_string()).unwrap());
-                                        }
+                                        user_checks.retain(|f| f.nick != username);
                                     },
                                     None => ()
                                 }
