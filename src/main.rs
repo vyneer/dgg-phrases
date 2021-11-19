@@ -81,6 +81,12 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
     // we just recreate it
     let (conn, conn2) = connect(params.as_str(), NoTls).await.unwrap();
 
+    tokio::spawn(async move {
+        if let Err(e) = conn2.await {
+            error!("Postgres connection error: {}", e);
+        }
+    });
+
     for row in conn
         .query("SELECT phrase FROM phrases ORDER by time DESC", &[])
         .await
@@ -88,12 +94,6 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
     {
         phrases.push(row.get("phrase"))
     }
-
-    tokio::spawn(async move {
-        if let Err(e) = conn2.await {
-            error!("Postgres connection error: {}", e);
-        }
-    });
 
     let regex = Regex::new(r"(\d+[HMDSWwhmds])?\s?(.*)").unwrap();
     let regex2 = Regex::new(r"(.*)").unwrap();
