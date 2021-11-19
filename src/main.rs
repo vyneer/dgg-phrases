@@ -73,16 +73,21 @@ fn split_once(in_string: &str) -> (&str, &str) {
 }
 
 #[tokio::main]
-async fn websocket_thread_func(
-    params: String,
-    mut phrases: Vec<String>,
-    mut user_checks: Vec<Status>,
-    bm_vec: Vec<String>,
-    timer_tx: Sender<()>,
-) {
+async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Sender<()>) {
+    let mut phrases: Vec<String> = Vec::new();
+    let mut user_checks: Vec<Status> = Vec::new();
+
     // since we can't move a pg connection from one thread to another easily
     // we just recreate it
     let (conn, conn2) = connect(params.as_str(), NoTls).await.unwrap();
+
+    for row in conn
+        .query("SELECT phrase FROM phrases ORDER by time DESC", &[])
+        .await
+        .unwrap()
+    {
+        phrases.push(row.get("phrase"))
+    }
 
     tokio::spawn(async move {
         if let Err(e) = conn2.await {
@@ -404,9 +409,6 @@ async fn main() {
         }
     }
 
-    let mut phrases: Vec<String> = Vec::new();
-    let user_checks: Vec<Status> = Vec::new();
-
     // ignore the phrases from banned_memes.txt
     let file = File::open("banned_memes.txt").expect("no such file");
     let buf = BufReader::new(file);
@@ -427,22 +429,12 @@ async fn main() {
         );
     }
 
-    for row in conn
-        .query("SELECT phrase FROM phrases ORDER by time DESC", &[])
-        .await
-        .unwrap()
-    {
-        phrases.push(row.get("phrase"))
-    }
-
     handle.abort();
 
     let mut sleep_timer = 0;
 
     'outer: loop {
         let params = params.clone();
-        let phrases = phrases.clone();
-        let user_checks = user_checks.clone();
         let bm_vec = bm_vec.clone();
         // timeout channels
         let (timer_tx, timer_rx): (Sender<()>, Receiver<()>) = std::sync::mpsc::channel();
@@ -476,7 +468,7 @@ async fn main() {
         // the main websocket thread that does all the hard work
         let ws_thread = thread::Builder::new()
             .name("websocket_thread".to_string())
-            .spawn(move || websocket_thread_func(params, phrases, user_checks, bm_vec, timer_tx))
+            .spawn(move || websocket_thread_func(params, bm_vec, timer_tx))
             .unwrap();
 
         match timeout_thread.join() {
