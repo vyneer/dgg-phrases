@@ -207,7 +207,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                                         match phrases.iter().position(|x| *x == phrase) {
                                             Some(i) => {
                                                 conn.execute(
-                                                    "DELETE FROM phrases WHERE phrase = $1",
+                                                    "DELETE FROM phrases WHERE phrase iLIKE $1",
                                                     &[&phrase],
                                                 )
                                                 .await
@@ -289,7 +289,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                             for check in user_checks.clone() {
                                 if (check.timestamp + 10000) < msg_des.timestamp {
                                     conn.execute(
-                                        "DELETE FROM phrases WHERE phrase = $1",
+                                        "DELETE FROM phrases WHERE phrase iLIKE $1",
                                         &[&check.data],
                                     )
                                     .await
@@ -415,17 +415,18 @@ async fn main() {
     let bm_vec = buf
         .lines()
         .map(|l| l.expect("Could not parse line"))
+        .map(|s| s.to_lowercase())
         .collect::<Vec<String>>();
     for entry in &bm_vec {
         conn.execute(
-            "DELETE FROM phrases where phrase = $1",
-            &[&entry.to_lowercase()],
+            "DELETE FROM phrases where phrase iLIKE $1",
+            &[&entry],
         )
         .await
         .unwrap();
         debug!(
             "Deleted a banned meme phrase from db: {:?}",
-            entry.to_lowercase()
+            entry
         );
     }
 
