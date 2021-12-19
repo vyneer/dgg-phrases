@@ -241,6 +241,10 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                                     } else {
                                         false
                                     }))
+                                    // if message doesnt come from an admin, mod, vip or a protected person
+                                    && !msg_des.features.contains(&"admin".to_string())
+                                    && !msg_des.features.contains(&"moderator".to_string())
+                                    && !msg_des.features.contains(&"vip".to_string())
                                     && !msg_des.features.contains(&"protected".to_string())
                                 {
                                     return Some(f);
@@ -418,16 +422,10 @@ async fn main() {
         .map(|s| s.to_lowercase())
         .collect::<Vec<String>>();
     for entry in &bm_vec {
-        conn.execute(
-            "DELETE FROM phrases where phrase iLIKE $1",
-            &[&entry],
-        )
-        .await
-        .unwrap();
-        debug!(
-            "Deleted a banned meme phrase from db: {:?}",
-            entry
-        );
+        conn.execute("DELETE FROM phrases where phrase iLIKE $1", &[&entry])
+            .await
+            .unwrap();
+        debug!("Deleted a banned meme phrase from db: {:?}", entry);
     }
 
     handle.abort();
