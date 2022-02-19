@@ -37,11 +37,6 @@ struct MitchEntry {
     username: String,
 }
 
-#[derive(Deserialize, Debug)]
-struct MitchRequest {
-    list: Vec<MitchEntry>,
-}
-
 #[derive(Debug, PartialEq, Clone)]
 struct Status {
     nick: String,
@@ -399,9 +394,9 @@ async fn main() {
     if !check_bool {
         let resp = reqwest::blocking::get("https://mitchdev.net/api/dgg/list")
             .unwrap()
-            .json::<MitchRequest>()
+            .json::<Vec<MitchEntry>>()
             .unwrap();
-        for entry in resp.list {
+        for entry in resp {
             conn.execute(
                 "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
                 &[&Decimal::new(DateTime::parse_from_rfc3339(entry.time_date.as_str()).unwrap().timestamp_millis(), 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
