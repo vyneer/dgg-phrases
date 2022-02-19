@@ -29,10 +29,11 @@ struct Message {
 struct MitchEntry {
     duration: String,
     phrase: String,
-    #[serde(rename = "timeDate")]
+    #[serde(rename = "added_date")]
     time_date: String,
     #[serde(rename = "type")]
     phrase_type: String,
+    #[serde(rename = "added_by")]
     username: String,
 }
 
