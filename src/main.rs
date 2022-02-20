@@ -16,6 +16,7 @@ use tokio::time::timeout;
 use tokio_postgres::*;
 use tokio_tungstenite::{connect_async, tungstenite::Message::Pong};
 use url::Url;
+use reqwest::Client;
 
 #[derive(Deserialize, Debug)]
 struct Message {
@@ -234,7 +235,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                                     || (if &f.chars().next().unwrap() == &'/'
                                         && &f.chars().next_back().unwrap() == &'/'
                                     {
-                                        Regex::new(rem_first_and_last(&f.replace("\\/", "/")))
+                                        Regex::new(rem_first_and_last(&f.replace("\\/", "/").replace("\\\\", "\\")))
                                             .unwrap()
                                             .is_match(&lc_data)
                                     } else {
@@ -394,10 +395,13 @@ async fn main() {
         .await
         .unwrap();
     let check_bool: bool = check.get("exists");
+    let client = Client::new();
     if !check_bool {
-        let resp = reqwest::blocking::get("https://mitchdev.net/api/dgg/list")
+        let resp = client.get("https://mitchdev.net/api/dgg/list").send()
+            .await
             .unwrap()
             .json::<Vec<MitchEntry>>()
+            .await
             .unwrap();
         for entry in resp {
             conn.execute(
