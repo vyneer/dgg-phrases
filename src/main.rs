@@ -91,6 +91,8 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
         phrases.push(row.get("phrase"))
     }
 
+    phrases = phrases.into_iter().map(|f| f.to_lowercase()).collect();
+
     let regex = Regex::new(r"(\d+[HMDSWwhmds])?\s?(.*)").unwrap();
     let regex2 = Regex::new(r"(.*)").unwrap();
     let regex3 = Regex::new(r"(.*) (muted|banned) for using banned phrase\((.*)\)").unwrap();
@@ -150,11 +152,12 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                         // if command has an argument (whitespace)
                         // and the one issuing is an admin or a moderator
                         // process the command
-                        if msg_des.data.contains(char::is_whitespace)
+                        let lc_data = msg_des.data.to_lowercase();
+                        if lc_data.contains(char::is_whitespace)
                             && (msg_des.features.contains(&"admin".to_string())
                                 || msg_des.features.contains(&"moderator".to_string()))
                         {
-                            let (command, params) = split_once(msg_des.data.as_str());
+                            let (command, params) = split_once(lc_data.as_str());
                             if command == "!addban" {
                                 match regex.captures(params) {
                                     Some(capt) => {
@@ -227,13 +230,13 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                             .clone()
                             .into_iter()
                             .filter_map(|f| {
-                                if (msg_des.data.contains(&f)
+                                if (lc_data.contains(&f)
                                     || (if &f.chars().next().unwrap() == &'/'
                                         && &f.chars().next_back().unwrap() == &'/'
                                     {
                                         Regex::new(rem_first_and_last(&f.replace("\\/", "/")))
                                             .unwrap()
-                                            .is_match(&msg_des.data)
+                                            .is_match(&lc_data)
                                     } else {
                                         false
                                     }))
@@ -250,8 +253,8 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                             })
                             .collect::<Vec<String>>();
                         // if the message comes from a bot (and it matches the right message regex), continue
-                        if msg_des.nick == "Bot" && regex3.is_match(msg_des.data.as_str()) {
-                            match regex3.captures(msg_des.data.as_str()) {
+                        if msg_des.nick == "Bot" && regex3.is_match(lc_data.as_str()) {
+                            match regex3.captures(lc_data.as_str()) {
                                 Some(capt) => {
                                     let username =
                                         capt.get(1).map_or("", |m| m.as_str()).to_string();
