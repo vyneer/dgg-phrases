@@ -55,7 +55,7 @@ fn rem_first_and_last(value: &str) -> &str {
 
 fn push_status(vector: &mut Vec<Status>, msg: &Message, phrase: String) {
     let buf = Status {
-        nick: msg.nick.clone(),
+        nick: msg.nick.clone().to_lowercase(),
         timestamp: msg.timestamp,
         data: phrase.to_lowercase(),
     };
