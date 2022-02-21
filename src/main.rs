@@ -2,7 +2,7 @@ use chrono::DateTime;
 use env_logger::Env;
 use futures_util::{future, pin_mut, StreamExt};
 use log::{debug, error, info};
-use regex::Regex;
+use fancy_regex::Regex;
 use rust_decimal::prelude::Decimal;
 use serde::Deserialize;
 use std::{
@@ -160,7 +160,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                         {
                             let (command, params) = split_once(lc_data.as_str());
                             if command == "!addban" {
-                                match regex.captures(params) {
+                                match regex.captures(params).unwrap() {
                                     Some(capt) => {
                                         let phrase =
                                             capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
@@ -178,7 +178,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                                     None => (),
                                 }
                             } else if command == "!addmute" {
-                                match regex.captures(params) {
+                                match regex.captures(params).unwrap() {
                                     Some(capt) => {
                                         let phrase =
                                             capt.get(2).map_or("", |m| m.as_str()).to_lowercase();
@@ -200,7 +200,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                                 || command == "!deletemute"
                                 || command == "!dmute"
                             {
-                                match regex2.captures(params) {
+                                match regex2.captures(params).unwrap() {
                                     Some(capt) => {
                                         let phrase =
                                             capt.get(1).map_or("", |m| m.as_str()).to_lowercase();
@@ -237,7 +237,7 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                                     {
                                         Regex::new(rem_first_and_last(&f.replace("\\/", "/").replace("\\\\", "\\")))
                                             .unwrap()
-                                            .is_match(&lc_data)
+                                            .is_match(&lc_data).unwrap()
                                     } else {
                                         false
                                     }))
@@ -254,8 +254,8 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
                             })
                             .collect::<Vec<String>>();
                         // if the message comes from a bot (and it matches the right message regex), continue
-                        if msg_des.nick == "Bot" && regex3.is_match(lc_data.as_str()) {
-                            match regex3.captures(lc_data.as_str()) {
+                        if msg_des.nick == "Bot" && regex3.is_match(lc_data.as_str()).unwrap() {
+                            match regex3.captures(lc_data.as_str()).unwrap() {
                                 Some(capt) => {
                                     let username =
                                         capt.get(1).map_or("", |m| m.as_str()).to_string();
