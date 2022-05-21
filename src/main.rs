@@ -1,14 +1,19 @@
 use chrono::DateTime;
 use env_logger::Env;
+use fancy_regex::Regex;
 use futures_util::{future, pin_mut, StreamExt};
 use log::{debug, error, info};
-use fancy_regex::Regex;
+use reqwest::Client;
 use rust_decimal::prelude::Decimal;
 use serde::Deserialize;
 use std::{
     fs::File,
     io::{prelude::*, BufReader},
-    sync::mpsc::{Receiver, Sender},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::{Receiver, Sender},
+        Arc,
+    },
     time::Duration,
     {env, panic, thread},
 };
@@ -16,7 +21,6 @@ use tokio::time::timeout;
 use tokio_postgres::*;
 use tokio_tungstenite::{connect_async, tungstenite::Message::Pong};
 use url::Url;
-use reqwest::Client;
 
 #[derive(Deserialize, Debug)]
 struct Message {
@@ -397,7 +401,9 @@ async fn main() {
     let check_bool: bool = check.get("exists");
     let client = Client::new();
     if !check_bool {
-        let resp = client.get("https://mitchdev.net/api/dgg/list").send()
+        let resp = client
+            .get("https://mitchdev.net/api/dgg/list")
+            .send()
             .await
             .unwrap()
             .json::<Vec<MitchEntry>>()
@@ -433,26 +439,27 @@ async fn main() {
 
     handle.abort();
 
-    let mut sleep_timer = 0;
+    let sleep_timer = Arc::new(AtomicU64::new(0));
 
     'outer: loop {
+        let sleep_timer_inner = Arc::clone(&sleep_timer);
         let params = params.clone();
         let bm_vec = bm_vec.clone();
         // timeout channels
         let (timer_tx, timer_rx): (Sender<()>, Receiver<()>) = std::sync::mpsc::channel();
 
-        match sleep_timer {
+        match sleep_timer.load(Ordering::Acquire) {
             0 => {}
             1 => info!(
                 "One of the threads panicked, restarting in {} second",
-                sleep_timer
+                sleep_timer.load(Ordering::Acquire)
             ),
             _ => info!(
                 "One of the threads panicked, restarting in {} seconds",
-                sleep_timer
+                sleep_timer.load(Ordering::Acquire)
             ),
         }
-        thread::sleep(Duration::from_secs(sleep_timer));
+        thread::sleep(Duration::from_secs(sleep_timer.load(Ordering::Acquire)));
 
         // this thread checks for the timeouts in the websocket thread
         // if there's nothing in the ws for a minute, panic
@@ -460,7 +467,11 @@ async fn main() {
             .name("timeout_thread".to_string())
             .spawn(move || loop {
                 match timer_rx.recv_timeout(Duration::from_secs(60)) {
-                    Ok(_) => (),
+                    Ok(_) => {
+                        if sleep_timer_inner.load(Ordering::Acquire) != 0 {
+                            sleep_timer_inner.store(0, Ordering::Release)
+                        }
+                    }
                     Err(e) => {
                         panic!("Lost connection, terminating the timeout thread: {}", e);
                     }
@@ -476,9 +487,10 @@ async fn main() {
         match timeout_thread.join() {
             Ok(_) => {}
             Err(_) => {
-                match sleep_timer {
-                    0 => sleep_timer = 1,
-                    1..=64 => sleep_timer = sleep_timer * 2,
+                match sleep_timer.load(Ordering::Acquire) {
+                    0 => sleep_timer.store(1, Ordering::Release),
+                    1..=16 => sleep_timer
+                        .store(sleep_timer.load(Ordering::Acquire) * 2, Ordering::Release),
                     _ => {}
                 }
                 continue 'outer;
@@ -487,9 +499,10 @@ async fn main() {
         match ws_thread.join() {
             Ok(_) => {}
             Err(_) => {
-                match sleep_timer {
-                    0 => sleep_timer = 1,
-                    1..=64 => sleep_timer = sleep_timer * 2,
+                match sleep_timer.load(Ordering::Acquire) {
+                    0 => sleep_timer.store(1, Ordering::Release),
+                    1..=16 => sleep_timer
+                        .store(sleep_timer.load(Ordering::Acquire) * 2, Ordering::Release),
                     _ => {}
                 }
                 continue 'outer;
