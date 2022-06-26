@@ -1,3 +1,4 @@
+use crossbeam_channel::{Receiver, Sender};
 use env_logger::Env;
 use fancy_regex::Regex;
 use futures_util::{future, pin_mut, StreamExt};
@@ -10,7 +11,6 @@ use std::{
     io::{prelude::*, BufReader},
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc::{Receiver, Sender},
         Arc,
     },
     time::Duration,
@@ -49,6 +49,11 @@ struct Status {
     timestamp: i64,
 }
 
+enum TimeoutMsg {
+    Ok,
+    Shutdown,
+}
+
 // https://stackoverflow.com/questions/65976432/how-to-remove-first-and-last-character-of-a-string-in-rust
 fn rem_first_and_last(value: &str) -> &str {
     let mut chars = value.chars();
@@ -74,7 +79,13 @@ fn split_once(in_string: &str) -> (&str, &str) {
 }
 
 #[tokio::main]
-async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Sender<()>) {
+async fn websocket_thread_func(
+    params: String,
+    bm_vec: Vec<String>,
+    timer_tx: Sender<TimeoutMsg>,
+    ctrlc_inner_rx: Receiver<()>,
+    ctrlc_outer_tx: Sender<()>,
+) {
     let mut phrases: Vec<String> = Vec::new();
     let mut user_checks: Vec<Status> = Vec::new();
 
@@ -148,7 +159,16 @@ async fn websocket_thread_func(params: String, bm_vec: Vec<String>, timer_tx: Se
             };
             // send () to our timer channel,
             // letting that other thread know we're alive
-            timer_tx.send(()).unwrap();
+            timer_tx.send(TimeoutMsg::Ok).unwrap();
+            // try and receive ctrl-c signal to shutdown
+            match ctrlc_inner_rx.try_recv() {
+                Ok(_) => {
+                    ctrlc_outer_tx.send(()).unwrap();
+                    timer_tx.send(TimeoutMsg::Shutdown).unwrap();
+                    break;
+                }
+                Err(_) => {}
+            }
             if msg_og.is_text() {
                 let (msg_type, msg_data) = split_once(msg_og.to_text().unwrap());
                 match msg_type {
@@ -419,9 +439,9 @@ async fn main() {
             )
             .unwrap();
             conn.execute(
-                    "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                    &[&Decimal::new(unix_stamp, 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
-                ).await.unwrap();
+                "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
+                &[&Decimal::new(unix_stamp, 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
+            ).await.unwrap();
             debug!(
                 "Added a {} phrase to db: {:?}",
                 entry.phrase_type,
@@ -448,13 +468,27 @@ async fn main() {
     handle.abort();
 
     let sleep_timer = Arc::new(AtomicU64::new(0));
+    let (ctrlc_outer_tx, ctrlc_outer_rx): (Sender<()>, Receiver<()>) =
+        crossbeam_channel::unbounded();
 
     'outer: loop {
+        let cloned_ctrlc_outer_tx_ws = ctrlc_outer_tx.clone();
+
+        match ctrlc_outer_rx.try_recv() {
+            Ok(_) => {
+                break 'outer;
+            }
+            Err(_) => {}
+        }
+
         let sleep_timer_inner = Arc::clone(&sleep_timer);
         let params = params.clone();
         let bm_vec = bm_vec.clone();
         // timeout channels
-        let (timer_tx, timer_rx): (Sender<()>, Receiver<()>) = std::sync::mpsc::channel();
+        let (timer_tx, timer_rx): (Sender<TimeoutMsg>, Receiver<TimeoutMsg>) =
+            crossbeam_channel::unbounded();
+        let (ctrlc_inner_tx, ctrlc_inner_rx): (Sender<()>, Receiver<()>) =
+            crossbeam_channel::unbounded();
 
         match sleep_timer.load(Ordering::Acquire) {
             0 => {}
@@ -475,11 +509,16 @@ async fn main() {
             .name("timeout_thread".to_string())
             .spawn(move || loop {
                 match timer_rx.recv_timeout(Duration::from_secs(60)) {
-                    Ok(_) => {
-                        if sleep_timer_inner.load(Ordering::Acquire) != 0 {
-                            sleep_timer_inner.store(0, Ordering::Release)
+                    Ok(m) => match m {
+                        TimeoutMsg::Ok => {
+                            if sleep_timer_inner.load(Ordering::Acquire) != 0 {
+                                sleep_timer_inner.store(0, Ordering::Release)
+                            }
                         }
-                    }
+                        TimeoutMsg::Shutdown => {
+                            break;
+                        }
+                    },
                     Err(e) => {
                         panic!("Lost connection, terminating the timeout thread: {}", e);
                     }
@@ -489,8 +528,21 @@ async fn main() {
         // the main websocket thread that does all the hard work
         let ws_thread = thread::Builder::new()
             .name("websocket_thread".to_string())
-            .spawn(move || websocket_thread_func(params, bm_vec, timer_tx))
+            .spawn(move || {
+                websocket_thread_func(
+                    params,
+                    bm_vec,
+                    timer_tx,
+                    ctrlc_inner_rx,
+                    cloned_ctrlc_outer_tx_ws,
+                )
+            })
             .unwrap();
+
+        ctrlc::set_handler(move || {
+            ctrlc_inner_tx.send(()).unwrap();
+        })
+        .expect("Error setting Ctrl-C handler");
 
         match timeout_thread.join() {
             Ok(_) => {}
