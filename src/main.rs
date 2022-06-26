@@ -1,4 +1,3 @@
-use chrono::DateTime;
 use env_logger::Env;
 use fancy_regex::Regex;
 use futures_util::{future, pin_mut, StreamExt};
@@ -17,6 +16,7 @@ use std::{
     time::Duration,
     {env, panic, thread},
 };
+use time::{format_description::well_known::Rfc3339, PrimitiveDateTime};
 use tokio::time::timeout;
 use tokio_postgres::*;
 use tokio_tungstenite::{connect_async, tungstenite::Message::Pong};
@@ -410,10 +410,18 @@ async fn main() {
             .await
             .unwrap();
         for entry in resp {
+            let unix_stamp = i64::try_from(
+                PrimitiveDateTime::parse(entry.time_date.as_str(), &Rfc3339)
+                    .unwrap()
+                    .assume_utc()
+                    .unix_timestamp_nanos()
+                    / 1_000_000,
+            )
+            .unwrap();
             conn.execute(
-                "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                &[&Decimal::new(DateTime::parse_from_rfc3339(entry.time_date.as_str()).unwrap().timestamp_millis(), 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
-            ).await.unwrap();
+                    "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
+                    &[&Decimal::new(unix_stamp, 0), &entry.username, &entry.phrase.to_lowercase(), &entry.duration, &entry.phrase_type],
+                ).await.unwrap();
             debug!(
                 "Added a {} phrase to db: {:?}",
                 entry.phrase_type,
