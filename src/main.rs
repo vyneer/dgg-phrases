@@ -299,7 +299,7 @@ async fn websocket_thread_func(
                                     {
                                         conn.execute(
                                         "INSERT INTO phrases (time, username, phrase, duration, type) VALUES (TO_TIMESTAMP($1/1000.0), $2, $3, $4, $5)", 
-                                        &[&Decimal::new(0, 0), &msg_des.nick, &phrase, &"", &typ],
+                                        &[&Decimal::new(msg_des.timestamp, 0), &"bot_detection", &phrase, &"", &typ],
                                         ).await.unwrap();
                                         phrases.push(phrase.to_string());
                                         debug!("Added a {} phrase to db: {:?}", typ, phrase);
