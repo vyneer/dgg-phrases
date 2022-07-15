@@ -265,11 +265,13 @@ async fn websocket_thread_func(
                                     } else {
                                         false
                                     }))
-                                    // if message doesnt come from an admin, mod, vip or a protected person
+                                    // if message doesnt come from an admin, mod, vip, a protected person, a bot or a community bot (flair11)
                                     && !msg_des.features.contains(&"admin".to_string())
                                     && !msg_des.features.contains(&"moderator".to_string())
                                     && !msg_des.features.contains(&"vip".to_string())
                                     && !msg_des.features.contains(&"protected".to_string())
+                                    && !msg_des.features.contains(&"bot".to_string())
+                                    && !msg_des.features.contains(&"flair11".to_string())
                                 {
                                     return Some(f);
                                 } else {
